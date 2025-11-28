@@ -56,6 +56,7 @@ class AddToolResultCommand(BaseModel):
     """Command to add a tool result to the conversation."""
     type: str = Field(default="add-tool-result", description="Command type")
     toolCallId: str = Field(..., description="ID of the tool call")
+    toolName: Optional[str] = Field(None, description="Name of the tool")
     result: Dict[str, Any] = Field(..., description="Tool execution result")
 
 
@@ -225,6 +226,7 @@ async def tool_executor_node(state: GraphState) -> Dict[str, Any]:
             tool_message = ToolMessage(
                 content=final_state.get("result", "Task completed"),
                 tool_call_id=tool_call["id"],
+                name=tool_call["name"],
                 artifact={"subgraph_state": final_state}
             )
             tool_messages.append(tool_message)
@@ -232,7 +234,8 @@ async def tool_executor_node(state: GraphState) -> Dict[str, Any]:
             # Handle other tools if any
             tool_message = ToolMessage(
                 content=f"Executed tool {tool_call['name']}",
-                tool_call_id=tool_call["id"]
+                tool_call_id=tool_call["id"],
+                name=tool_call["name"]
             )
             tool_messages.append(tool_message)
 
@@ -326,7 +329,8 @@ async def chat_endpoint(request: ChatRequest):
                 # Handle tool results
                 input_messages.append(ToolMessage(
                     content=str(command.result),
-                    tool_call_id=command.toolCallId
+                    tool_call_id=command.toolCallId,
+                    name=command.toolName
                 ))
 
         # Add messages to controller state
