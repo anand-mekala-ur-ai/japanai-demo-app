@@ -22,7 +22,7 @@ import {
 
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { motion } from "framer-motion";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/button-old";
 import { cn } from "@/lib/utils";
 import { MarkdownText } from "./markdown-text";
 import { ToolFallback } from "./tool-fallback";

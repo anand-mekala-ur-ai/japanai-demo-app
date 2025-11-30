@@ -6,7 +6,7 @@ import {
   XCircleIcon,
 } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
+import { Button } from "@/components/ui/button-old";
 import { cn } from "@/lib/utils";
 
 export const ToolFallback: ToolCallMessagePartComponent = ({

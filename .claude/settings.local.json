@@ -2,7 +2,13 @@
   "permissions": {
     "allow": [
       "WebSearch",
-      "WebFetch(domain:www.npmjs.com)"
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:docs.langchain.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:www.scrapingbee.com)",
+      "WebFetch(domain:jp.mercari.com)",
+      "Bash(pnpm remove:*)",
+      "Bash(cat:*)"
     ],
     "deny": [],
     "ask": []

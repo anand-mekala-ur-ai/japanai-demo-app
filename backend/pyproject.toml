@@ -1,20 +1,19 @@
 [project]
-name = "assistant-transport-backend-langgraph"
-version = "0.1.0"
-description = "Assistant Transport Backend with LangGraph integration"
+name = "assistant-transport-backend"
+version = "0.2.0"
+description = "Assistant Transport Backend with direct Anthropic SDK"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.100.0",
     "uvicorn[standard]>=0.20.0",
     "assistant-stream>=0.0.31",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
-    "langgraph>=0.2.0",
-    "langchain>=0.2.0",
-    "langchain-core>=0.2.0",
-    "langchain-openai>=0.1.0",
+    "anthropic>=0.39.0",
     "httpx>=0.24.0",
+    "beautifulsoup4>=4.12.0",
+    "scrapingbee>=2.0.2",
 ]
 
 [project.optional-dependencies]

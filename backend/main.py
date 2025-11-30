@@ -1,33 +1,28 @@
 #!/usr/bin/env python3
 """
-Assistant Transport Backend with LangGraph - FastAPI + assistant-stream + LangGraph server
+Assistant Transport Backend - FastAPI + assistant-stream + Direct Anthropic SDK
+
+This implementation uses the Anthropic SDK directly without third-party agent frameworks
+(no LangChain, LangGraph, or similar libraries).
 """
 
 import os
-import asyncio
-from typing import Dict, Any, List, Optional, Union, Sequence, Annotated
+import json
+from typing import Dict, Any, List, Optional, Union, AsyncGenerator
 from contextlib import asynccontextmanager
 import uvicorn
-import json
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 
+from anthropic import AsyncAnthropic
+
 from assistant_stream.serialization import DataStreamResponse
-from assistant_stream import RunController, create_run
-from assistant_stream.modules.langgraph import append_langgraph_event, get_tool_call_subgraph_state
+from assistant_stream import create_run
 
-from langgraph.graph import StateGraph, END
-from langgraph.graph.state import CompiledStateGraph
-from langgraph.graph import add_messages
-from langgraph.prebuilt import ToolNode
-
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage, ToolMessage, BaseMessage
-from langchain_core.tools import tool
-from langchain_openai import ChatOpenAI
-from typing import TypedDict
+from tools import TOOLS, execute_tool
 
 # Load environment variables
 load_dotenv()
@@ -71,227 +66,139 @@ class ChatRequest(BaseModel):
     state: Optional[Dict[str, Any]] = Field(None, description="State")
 
 
-# Define LangGraph state
-class GraphState(TypedDict):
-    """State for the conversation graph."""
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-
-
-# Define subagent state
-class SubagentState(TypedDict):
-    """State for the subagent."""
-    messages: Annotated[Sequence[BaseMessage], add_messages]
-    task: str
-    result: str
-
-
-# Create the Task tool
-@tool
-def task_tool(task_description: str) -> str:
+async def run_agent(
+    messages: List[Dict[str, Any]],
+    tools: List[Dict[str, Any]],
+    system: Optional[str] = None,
+) -> AsyncGenerator[tuple[str, Any], None]:
     """
-    Execute a complex task using a subagent.
+    Async generator that runs the agent loop.
 
-    Args:
-        task_description: Description of the task to perform
+    Yields events as tuples of (event_type, data):
+    - ("text_delta", str): Text chunk to stream
+    - ("tool_call_start", {"id": str, "name": str}): Start of a tool call
+    - ("tool_call_args", {"id": str, "args": dict}): Complete tool call arguments
+    - ("tool_result", {"id": str, "name": str, "result": any}): Tool execution result
 
-    Returns:
-        The result of the task execution
+    The loop continues until the model produces a response with no tool calls.
     """
-    # This is a placeholder - the actual execution will be handled by the subgraph
-    return f"Task '{task_description}' will be executed by the subagent."
+    client = AsyncAnthropic()
 
-
-# Subagent node for executing tasks
-async def subagent_node(state: SubagentState) -> Dict[str, Any]:
-    """Subagent that executes the task."""
-    messages = state.get("messages", [])
-    task = state.get("task", "")
-
-    # Initialize a simpler LLM for the subagent
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.7,
-        streaming=True
-    )
-
-    # Create a prompt for the subagent
-    subagent_messages = [
-        SystemMessage(content=f"You are a helpful subagent. Execute this task: {task}"),
-        HumanMessage(content=f"Please complete the following task: {task}")
-    ]
-
-    # Generate response
-    if os.getenv("OPENAI_API_KEY"):
-        response = await llm.ainvoke(subagent_messages)
-        result = response.content
-    else:
-        result = f"Mock subagent result for task: {task}"
-
-    return {
-        "messages": [AIMessage(content=result)],
-        "result": result
-    }
-
-
-def create_subagent_graph() -> CompiledStateGraph:
-    """Create the subagent graph."""
-    workflow = StateGraph(SubagentState)
-
-    # Add the subagent node
-    workflow.add_node("execute_task", subagent_node)
-
-    # Set entry and exit points
-    workflow.set_entry_point("execute_task")
-    workflow.add_edge("execute_task", END)
-
-    return workflow.compile()
-
-
-async def agent_node(state: GraphState) -> Dict[str, Any]:
-    """Main agent node that can call tools."""
-    messages = state.get("messages", [])
-
-    # Initialize the LLM with tool binding
-    llm = ChatOpenAI(
-        model="gpt-4o-mini",
-        temperature=0.7,
-        streaming=True,
-    )
-
-    # Bind the Task tool to the LLM
-    llm_with_tools = llm.bind_tools([task_tool])
-
-    # Check if OpenAI API key is set
-    if os.getenv("OPENAI_API_KEY"):
-        response = await llm_with_tools.ainvoke(messages)
-    else:
-        # Mock response with a tool call for testing
-        print("⚠️ No OpenAI API key found - using mock response with tool call")
-        response = AIMessage(
-            content="I'll help you with that task.",
-            tool_calls=[{
-                "id": "task_001",
-                "name": "task_tool",
-                "args": {"task_description": "Complete the requested task"}
-            }]
-        )
-
-    return {"messages": [response]}
-
-
-def should_call_tools(state: GraphState) -> str:
-    """Determine if tools should be called."""
-    messages = state.get("messages", [])
-    if not messages:
-        return "end"
-
-    last_message = messages[-1]
-    # Check if the last message has tool calls
-    if hasattr(last_message, 'tool_calls') and last_message.tool_calls:
-        return "tools"
-
-    return "end"
-
-
-async def tool_executor_node(state: GraphState) -> Dict[str, Any]:
-    """Execute tool calls, including Task tool which spawns subagents."""
-    messages = state.get("messages", [])
-    if not messages:
-        return {"messages": []}
-
-    last_message = messages[-1]
-    if not hasattr(last_message, 'tool_calls') or not last_message.tool_calls:
-        return {"messages": []}
-
-    # Process each tool call
-    tool_messages = []
-    for tool_call in last_message.tool_calls:
-        if tool_call["name"] == "task_tool":
-            # Extract task description
-            task_description = tool_call["args"].get("task_description", "")
-
-            # Create and run the subagent graph
-
-            # Initialize subagent state
-            subagent_state = {
-                "messages": [],
-                "task": task_description,
-                "result": ""
-            }
-
-            # Run the subagent
-            final_state = await subagent_graph.ainvoke(subagent_state)
-
-            # Create tool message with the result
-            tool_message = ToolMessage(
-                content=final_state.get("result", "Task completed"),
-                tool_call_id=tool_call["id"],
-                name=tool_call["name"],
-                artifact={"subgraph_state": final_state}
-            )
-            tool_messages.append(tool_message)
-        else:
-            # Handle other tools if any
-            tool_message = ToolMessage(
-                content=f"Executed tool {tool_call['name']}",
-                tool_call_id=tool_call["id"],
-                name=tool_call["name"]
-            )
-            tool_messages.append(tool_message)
-
-    return {"messages": tool_messages}
-
-
-subagent_graph = create_subagent_graph()
-
-def create_graph() -> CompiledStateGraph:
-    """Create and compile the LangGraph with subgraph support."""
-    # Create the main workflow
-    workflow = StateGraph(GraphState)
-
-    # Add nodes
-    workflow.add_node("agent", agent_node)
-    workflow.add_node("tools", tool_executor_node)
-
-    # Set entry point
-    workflow.set_entry_point("agent")
-
-    # Add conditional edges
-    workflow.add_conditional_edges(
-        "agent",
-        should_call_tools,
-        {
-            "tools": "tools",
-            "end": END
+    while True:
+        # Build the API request
+        request_kwargs = {
+            "model": "claude-sonnet-4-5-20250929",
+            "max_tokens": 4096,
+            "messages": messages,
         }
-    )
 
-    # After tools, go back to agent for potential follow-up
-    workflow.add_edge("tools", "agent")
+        if tools:
+            request_kwargs["tools"] = tools
 
-    # Compile the graph
-    return workflow.compile()
+        if system:
+            request_kwargs["system"] = system
 
-graph = create_graph()
+        # Track tool calls in the current response
+        current_tool_calls: Dict[int, Dict[str, Any]] = {}
+        text_content = ""
+
+        # Stream the response
+        async with client.messages.stream(**request_kwargs) as stream:
+            async for event in stream:
+                # Handle text deltas
+                if event.type == "content_block_delta":
+                    if hasattr(event.delta, "text"):
+                        text_content += event.delta.text
+                        yield ("text_delta", event.delta.text)
+                    elif hasattr(event.delta, "partial_json"):
+                        # Tool input is being streamed - accumulate it
+                        pass
+
+                # Handle content block start (text or tool_use)
+                elif event.type == "content_block_start":
+                    if event.content_block.type == "tool_use":
+                        tool_id = event.content_block.id
+                        tool_name = event.content_block.name
+                        current_tool_calls[event.index] = {
+                            "id": tool_id,
+                            "name": tool_name,
+                            "input": {}
+                        }
+                        yield ("tool_call_start", {"id": tool_id, "name": tool_name})
+
+            # Get the final message to extract complete tool calls
+            final_message = await stream.get_final_message()
+
+        # Extract tool calls from the final message
+        tool_use_blocks = [
+            block for block in final_message.content
+            if block.type == "tool_use"
+        ]
+
+        if not tool_use_blocks:
+            # No tool calls - we're done
+            break
+
+        # Yield complete tool call arguments
+        for block in tool_use_blocks:
+            yield ("tool_call_args", {
+                "id": block.id,
+                "name": block.name,
+                "args": block.input
+            })
+
+        # Add assistant message to history (with both text and tool_use blocks)
+        assistant_content = []
+        for block in final_message.content:
+            if block.type == "text":
+                assistant_content.append({"type": "text", "text": block.text})
+            elif block.type == "tool_use":
+                assistant_content.append({
+                    "type": "tool_use",
+                    "id": block.id,
+                    "name": block.name,
+                    "input": block.input
+                })
+
+        messages.append({"role": "assistant", "content": assistant_content})
+
+        # Execute tools and collect results
+        tool_results = []
+        for block in tool_use_blocks:
+            result = await execute_tool(block.name, block.input)
+            yield ("tool_result", {
+                "id": block.id,
+                "name": block.name,
+                "result": result
+            })
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": block.id,
+                "content": json.dumps(result) if isinstance(result, dict) else str(result)
+            })
+
+        # Add tool results to messages
+        messages.append({"role": "user", "content": tool_results})
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    print("🚀 Assistant Transport Backend with LangGraph starting up...")
+    print("Starting Assistant Transport Backend (Direct Anthropic SDK)...")
     yield
-    print("🛑 Assistant Transport Backend with LangGraph shutting down...")
+    print("Shutting down Assistant Transport Backend...")
 
 
 # Create FastAPI app
 app = FastAPI(
-    title="Assistant Transport Backend with LangGraph",
-    description="A server implementing the assistant-transport protocol with LangGraph and subgraphs",
+    title="Assistant Transport Backend",
+    description="A server implementing the assistant-transport protocol with direct Anthropic SDK",
     version="0.2.0",
     lifespan=lifespan,
 )
 
 # Configure CORS
-cors_origins = ["*"]  # Allow all origins
+cors_origins = ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -303,9 +210,9 @@ app.add_middleware(
 
 @app.post("/assistant")
 async def chat_endpoint(request: ChatRequest):
-    """Chat endpoint using LangGraph with streaming and subgraph support."""
+    """Chat endpoint using direct Anthropic SDK with streaming."""
 
-    async def run_callback(controller: RunController):
+    async def run_callback(controller):
         """Callback function for the run controller."""
         # Initialize controller state if needed
         if controller.state is None:
@@ -314,6 +221,8 @@ async def chat_endpoint(request: ChatRequest):
             controller.state["messages"] = []
 
         input_messages = []
+        print("Processing chat request commands...")
+        print(f"Commands: {request.commands}")
 
         # Process commands
         for command in request.commands:
@@ -324,42 +233,69 @@ async def chat_endpoint(request: ChatRequest):
                     if part.type == "text" and part.text
                 ]
                 if text_parts:
-                    input_messages.append(HumanMessage(content=" ".join(text_parts)))
+                    input_messages.append({
+                        "role": "user",
+                        "content": " ".join(text_parts)
+                    })
             elif command.type == "add-tool-result":
-                # Handle tool results
-                input_messages.append(ToolMessage(
-                    content=str(command.result),
-                    tool_call_id=command.toolCallId,
-                    name=command.toolName
-                ))
+                # Handle tool results from frontend-executed tools
+                print("Adding tool result to conversation")
+                print(f"Tool Result: {command.result}")
+                input_messages.append({
+                    "role": "user",
+                    "content": [{
+                        "type": "tool_result",
+                        "tool_use_id": command.toolCallId,
+                        "content": json.dumps(command.result)
+                    }]
+                })
 
-        # Add messages to controller state
+        # Add messages to controller state for persistence
         for message in input_messages:
-            controller.state["messages"].append(message.model_dump())
+            controller.state["messages"].append(message)
 
-        # Create initial state for LangGraph
-        input_state = {"messages": input_messages}
+        # Check if API key is available
+        if not os.getenv("ANTHROPIC_API_KEY"):
+            print("Warning: No ANTHROPIC_API_KEY found - using mock response")
+            # Mock response for testing without API key
+            controller.append_text(
+                "I would help you, but no ANTHROPIC_API_KEY is configured. "
+                "Please set your API key in the .env file."
+            )
+            return
 
-        # Stream with subgraph support
-        async for namespace, event_type, chunk in graph.astream(
-            input_state,
-            stream_mode=["messages", "updates"],
-            subgraphs=True
-        ):
-            state = get_tool_call_subgraph_state(
-                controller,
-                namespace,
-                subgraph_node="tools",
-                default_state={},
-                artifact_field_name="subgraph_state"
-            )
-            # Append the event normally
-            append_langgraph_event(
-                state,
-                namespace,
-                event_type,
-                chunk
-            )
+        # Track current tool call for streaming
+        current_tool_call = None
+        # Track accumulated text for state persistence
+        accumulated_text = ""
+
+        # Run the agent loop
+        async for event_type, data in run_agent(input_messages, TOOLS, request.system):
+            if event_type == "text_delta":
+                accumulated_text += data
+                controller.append_text(data)
+
+            elif event_type == "tool_call_start":
+                # Start a new tool call
+                current_tool_call = await controller.add_tool_call(data["id"], data["name"])
+
+            elif event_type == "tool_call_args":
+                # Stream args as JSON text
+                if current_tool_call:
+                    current_tool_call.append_args_text(json.dumps(data["args"]))
+
+            elif event_type == "tool_result":
+                # Set the tool result
+                if current_tool_call:
+                    current_tool_call.set_response(data["result"])
+                    current_tool_call = None
+
+        # Add assistant message to state for multi-turn conversations
+        if accumulated_text:
+            controller.state["messages"].append({
+                "role": "assistant",
+                "content": accumulated_text
+            })
 
     # Create streaming response using assistant-stream
     stream = create_run(run_callback, state=request.state)
@@ -370,7 +306,7 @@ async def chat_endpoint(request: ChatRequest):
 @app.get("/health")
 async def health_check():
     """Health check endpoint."""
-    return {"status": "healthy", "service": "assistant-transport-backend-langgraph"}
+    return {"status": "healthy", "service": "assistant-transport-backend"}
 
 
 def main():
@@ -380,9 +316,9 @@ def main():
     debug = os.getenv("DEBUG", "false").lower() == "true"
     log_level = os.getenv("LOG_LEVEL", "info").lower()
 
-    print(f"🌟 Starting Assistant Transport Backend with LangGraph on {host}:{port}")
-    print(f"🎯 Debug mode: {debug}")
-    print(f"🌍 CORS origins: {cors_origins}")
+    print(f"Starting Assistant Transport Backend on {host}:{port}")
+    print(f"Debug mode: {debug}")
+    print(f"CORS origins: {cors_origins}")
 
     uvicorn.run(
         "main:app",
