@@ -4,13 +4,13 @@ import {
   AssistantRuntimeProvider,
   AssistantTransportConnectionMetadata,
   makeAssistantTool,
+  unstable_createMessageConverter as createMessageConverter,
   useAssistantTransportRuntime,
-  ThreadMessage,
-  ThreadUserMessage,
-  ThreadAssistantMessage,
-  TextMessagePart,
-  ToolCallMessagePart,
 } from "@assistant-ui/react";
+import {
+  convertLangChainMessages,
+  LangChainMessage,
+} from "@assistant-ui/react-langgraph";
 import { ReactNode } from "react";
 import { z } from "zod";
 
@@ -92,164 +92,39 @@ type MyRuntimeProviderProps = {
   children: ReactNode;
 };
 
-// Message types matching backend output (Anthropic format)
-type ContentBlock =
-  | { type: "text"; text: string }
-  | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id: string; content: string };
-
-type BackendMessage = {
-  role: "user" | "assistant";
-  content: string | ContentBlock[];
-};
-
 type State = {
-  messages: BackendMessage[];
+  messages: LangChainMessage[];
 };
 
-// Helper to create default metadata
-const createDefaultMetadata = () => ({
-  unstable_state: undefined,
-  unstable_annotations: undefined,
-  unstable_data: undefined,
-  steps: undefined,
-  submittedFeedback: undefined,
-  custom: {},
-});
-
-// Convert backend messages to ThreadMessages for assistant-ui
-function convertToThreadMessages(messages: BackendMessage[]): ThreadMessage[] {
-  const result: ThreadMessage[] = [];
-  const now = new Date();
-
-  for (let i = 0; i < messages.length; i++) {
-    const msg = messages[i];
-    const id = `msg-${i}`;
-
-    if (msg.role === "user") {
-      // User message - could be text or tool result
-      if (typeof msg.content === "string") {
-        const userMsg: ThreadUserMessage = {
-          id,
-          createdAt: now,
-          role: "user",
-          content: [{ type: "text", text: msg.content } as TextMessagePart],
-          attachments: [],
-          metadata: createDefaultMetadata(),
-        };
-        result.push(userMsg);
-      } else if (Array.isArray(msg.content)) {
-        // Handle tool results in user messages
-        const toolResults = msg.content.filter(
-          (block): block is Extract<ContentBlock, { type: "tool_result" }> =>
-            block.type === "tool_result"
-        );
-        // Skip tool result messages as they'll be attached to tool calls
-        if (toolResults.length === 0) {
-          // Regular content blocks
-          const textContent = msg.content
-            .filter((block): block is Extract<ContentBlock, { type: "text" }> => block.type === "text")
-            .map((block) => block.text)
-            .join("\n");
-          if (textContent) {
-            const userMsg: ThreadUserMessage = {
-              id,
-              createdAt: now,
-              role: "user",
-              content: [{ type: "text", text: textContent } as TextMessagePart],
-              attachments: [],
-              metadata: createDefaultMetadata(),
-            };
-            result.push(userMsg);
-          }
-        }
-      }
-    } else if (msg.role === "assistant") {
-      // Assistant message - could have text and/or tool calls
-      const contentBlocks = Array.isArray(msg.content)
-        ? msg.content
-        : [{ type: "text" as const, text: String(msg.content) }];
-
-      const threadContent: (TextMessagePart | ToolCallMessagePart)[] = [];
-
-      for (const block of contentBlocks) {
-        if (block.type === "text" && block.text) {
-          threadContent.push({ type: "text", text: block.text } as TextMessagePart);
-        } else if (block.type === "tool_use") {
-          // Find the corresponding tool result in the next message
-          const nextMsg = messages[i + 1];
-          let toolResult: unknown = undefined;
-
-          if (nextMsg && Array.isArray(nextMsg.content)) {
-            const resultBlock = nextMsg.content.find(
-              (b): b is Extract<ContentBlock, { type: "tool_result" }> =>
-                b.type === "tool_result" && b.tool_use_id === block.id
-            );
-            if (resultBlock) {
-              try {
-                toolResult = JSON.parse(resultBlock.content);
-              } catch {
-                toolResult = resultBlock.content;
-              }
-            }
-          }
-
-          threadContent.push({
-            type: "tool-call",
-            toolCallId: block.id,
-            toolName: block.name,
-            args: block.input,
-            argsText: JSON.stringify(block.input),
-            result: toolResult,
-            status: { type: "complete" },
-          } as ToolCallMessagePart);
-        }
-      }
-
-      if (threadContent.length > 0) {
-        const assistantMsg: ThreadAssistantMessage = {
-          id,
-          createdAt: now,
-          role: "assistant",
-          content: threadContent,
-          status: { type: "complete", reason: "stop" },
-          metadata: {
-            unstable_state: null,
-            unstable_annotations: [],
-            unstable_data: [],
-            steps: [],
-            submittedFeedback: undefined,
-            custom: {},
-          },
-        };
-        result.push(assistantMsg);
-      }
-    }
-  }
-
-  return result;
-}
+// Create LangChain message converter
+const LangChainMessageConverter = createMessageConverter(
+  convertLangChainMessages,
+);
 
 const converter = (
   state: State,
   connectionMetadata: AssistantTransportConnectionMetadata,
 ) => {
   // Build optimistic messages from pending commands
-  const optimisticMessages: BackendMessage[] = connectionMetadata.pendingCommands.flatMap(
-    (c) => {
+  const optimisticStateMessages = connectionMetadata.pendingCommands.map(
+    (c): LangChainMessage[] => {
       if (c.type === "add-message") {
-        const text = c.message.parts
-          .map((p) => (p.type === "text" ? p.text : ""))
-          .join("\n");
-        return [{ role: "user" as const, content: text }];
+        return [
+          {
+            type: "human" as const,
+            content: c.message.parts
+              .map((p) => (p.type === "text" ? p.text : ""))
+              .join("\n"),
+          },
+        ];
       }
       return [];
     },
   );
 
-  const allMessages = [...(state?.messages || []), ...optimisticMessages];
+  const messages = [...(state?.messages || []), ...optimisticStateMessages.flat()];
   return {
-    messages: convertToThreadMessages(allMessages),
+    messages: LangChainMessageConverter.toThreadMessages(messages),
     isRunning: connectionMetadata.isSending || false,
   };
 };
@@ -260,7 +135,8 @@ export function MyRuntimeProvider({ children }: MyRuntimeProviderProps) {
       messages: [],
     },
     api:
-      process.env["NEXT_PUBLIC_API_URL"] || "http://localhost:8010/assistant",
+      process.env["NEXT_PUBLIC_API_URL"] || "http://localhost:8001/assistant",
+   // protocol: "data-stream",   
     converter,
     headers: async () => ({
       "Test-Header": "test-value",

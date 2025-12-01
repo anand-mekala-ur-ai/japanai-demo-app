@@ -8,7 +8,11 @@
       "WebFetch(domain:www.scrapingbee.com)",
       "WebFetch(domain:jp.mercari.com)",
       "Bash(pnpm remove:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "WebFetch(domain:www.assistant-ui.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(pnpm add:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [],
     "ask": []
