@@ -3,148 +3,22 @@ import json
 from typing import Dict, Any, List, Optional, Union, AsyncGenerator
 from contextlib import asynccontextmanager
 import uvicorn
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
-
 from anthropic import AsyncAnthropic
-
 from assistant_stream.serialization import DataStreamResponse
 from assistant_stream import create_run
-
 from config import settings
 from tools import TOOLS, execute_tool
-
-
-# Helper functions to convert Anthropic messages to LangChain format
-def create_human_message(text: str) -> dict:
-    """Create a LangChain human message."""
-    return {"type": "human", "content": text}
-
-
-def create_ai_message(text: str = "", tool_calls: list = None) -> dict:
-    """Create a LangChain AI message."""
-    msg = {"type": "ai", "content": text}
-    if tool_calls:
-        msg["tool_calls"] = tool_calls
-    return msg
-
-
-def create_tool_message(tool_call_id: str, content: str) -> dict:
-    """Create a LangChain tool message."""
-    return {"type": "tool", "content": content, "tool_call_id": tool_call_id}
-
-
-def convert_langchain_to_anthropic(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """
-    Convert LangChain-format messages to Anthropic API format.
-
-    LangChain format:
-    - {"type": "human", "content": "..."}
-    - {"type": "ai", "content": "...", "tool_calls": [...]}
-    - {"type": "tool", "content": "...", "tool_call_id": "..."}
-
-    Anthropic format:
-    - {"role": "user", "content": "..."}
-    - {"role": "assistant", "content": [...]}
-    - tool results are grouped into user messages
-    """
-    anthropic_messages = []
-    i = 0
-
-    while i < len(messages):
-        msg = messages[i]
-        msg_type = msg.get("type")
-
-        if msg_type == "human":
-            anthropic_messages.append({
-                "role": "user",
-                "content": msg.get("content", "")
-            })
-            i += 1
-
-        elif msg_type == "ai":
-            content = []
-            text_content = msg.get("content", "")
-            if text_content:
-                content.append({"type": "text", "text": text_content})
-
-            tool_calls = msg.get("tool_calls", [])
-            for tc in tool_calls:
-                content.append({
-                    "type": "tool_use",
-                    "id": tc.get("id"),
-                    "name": tc.get("name"),
-                    "input": tc.get("args", {})
-                })
-
-            if content:
-                anthropic_messages.append({
-                    "role": "assistant",
-                    "content": content if len(content) > 1 or tool_calls else text_content
-                })
-            i += 1
-
-        elif msg_type == "tool":
-            # Collect consecutive tool messages into a single user message
-            tool_results = []
-            while i < len(messages) and messages[i].get("type") == "tool":
-                tool_msg = messages[i]
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tool_msg.get("tool_call_id"),
-                    "content": tool_msg.get("content", "")
-                })
-                i += 1
-
-            anthropic_messages.append({
-                "role": "user",
-                "content": tool_results
-            })
-        else:
-            # Skip unknown message types
-            i += 1
-
-    return anthropic_messages
-
-
-class MessagePart(BaseModel):
-    """A part of a user message."""
-    type: str = Field(..., description="The type of message part")
-    text: Optional[str] = Field(None, description="Text content")
-    image: Optional[str] = Field(None, description="Image URL or data")
-
-
-class UserMessage(BaseModel):
-    """A user message."""
-    role: str = Field(default="user", description="Message role")
-    parts: List[MessagePart] = Field(..., description="Message parts")
-
-
-class AddMessageCommand(BaseModel):
-    """Command to add a new message to the conversation."""
-    type: str = Field(default="add-message", description="Command type")
-    message: UserMessage = Field(..., description="User message")
-
-
-class AddToolResultCommand(BaseModel):
-    """Command to add a tool result to the conversation."""
-    type: str = Field(default="add-tool-result", description="Command type")
-    toolCallId: str = Field(..., description="ID of the tool call")
-    toolName: Optional[str] = Field(None, description="Name of the tool")
-    result: Dict[str, Any] = Field(..., description="Tool execution result")
-
-
-class ChatRequest(BaseModel):
-    """Request payload for the chat endpoint."""
-    commands: List[Union[AddMessageCommand, AddToolResultCommand]] = Field(
-        ..., description="List of commands to execute"
-    )
-    system: Optional[str] = Field(None, description="System prompt")
-    tools: Optional[Dict[str, Any]] = Field(None, description="Available tools")
-    runConfig: Optional[Dict[str, Any]] = Field(None, description="Run configuration")
-    state: Optional[Dict[str, Any]] = Field(None, description="State")
+from utils import (
+    create_human_message,
+    create_ai_message,
+    create_tool_message,
+    convert_langchain_to_anthropic
+)
+from models import (
+    ChatRequest
+)
 
 
 async def run_agent(
@@ -152,17 +26,6 @@ async def run_agent(
     tools: List[Dict[str, Any]],
     system: Optional[str] = None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
-    """
-    Async generator that runs the agent loop.
-
-    Yields events as tuples of (event_type, data):
-    - ("text_delta", str): Text chunk to stream
-    - ("tool_call_start", {"id": str, "name": str}): Start of a tool call
-    - ("tool_call_args", {"id": str, "args": dict}): Complete tool call arguments
-    - ("tool_result", {"id": str, "name": str, "result": any}): Tool execution result
-
-    The loop continues until the model produces a response with no tool calls.
-    """
     client = AsyncAnthropic()
 
     while True:
@@ -264,11 +127,9 @@ async def run_agent(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Application lifespan manager."""
     print("Starting Assistant Transport Backend (Direct Anthropic SDK)...")
     yield
     print("Shutting down Assistant Transport Backend...")
-
 
 # Create FastAPI app
 app = FastAPI(
@@ -291,10 +152,7 @@ app.add_middleware(
 
 @app.post("/assistant")
 async def chat_endpoint(request: ChatRequest):
-    """Chat endpoint using direct Anthropic SDK with streaming."""
-
     async def run_callback(controller):
-        """Callback function for the run controller."""
         # Initialize controller state if needed
         if controller.state is None:
             controller.state = {}
@@ -303,9 +161,6 @@ async def chat_endpoint(request: ChatRequest):
 
         # Build input messages in Anthropic format for the SDK
         input_messages = []
-        print("Processing chat request commands...")
-        print(f"Commands: {request.commands}")
-
         # Process commands
         for command in request.commands:
             if command.type == "add-message":
@@ -424,36 +279,21 @@ async def chat_endpoint(request: ChatRequest):
 
     # Create streaming response using assistant-stream
     stream = create_run(run_callback, state=request.state)
-
     return DataStreamResponse(stream)
 
 
-@app.get("/health")
-async def health_check():
-    """Health check endpoint."""
-    return {"status": "healthy", "service": "assistant-transport-backend"}
-
-
 def main():
-    """Main entry point for running the server."""
-    host = settings.HOST
-    port = settings.PORT
-    debug = settings.DEBUG
-    log_level = settings.LOG_LEVEL.lower()
-
-    print(f"Starting Assistant Transport Backend on {host}:{port}")
-    print(f"Debug mode: {debug}")
-    print(f"CORS origins: {settings.cors_origins_list}")
+    print(f"Starting Assistant Transport Backend on {settings.HOST}:{settings.PORT}")
+    print(f"Debug mode: {settings.DEBUG}")
 
     uvicorn.run(
         "main:app",
-        host=host,
-        port=port,
-        reload=debug,
-        log_level=log_level,
+        host=settings.HOST,
+        port=settings.PORT,
+        reload=settings.DEBUG,
+        log_level=settings.LOG_LEVEL.lower(),
         access_log=True,
     )
-
 
 if __name__ == "__main__":
     main()

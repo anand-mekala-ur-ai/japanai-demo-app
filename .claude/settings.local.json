@@ -12,7 +12,14 @@
       "WebFetch(domain:www.assistant-ui.com)",
       "WebFetch(domain:raw.githubusercontent.com)",
       "Bash(pnpm add:*)",
-      "mcp__ide__getDiagnostics"
+      "mcp__ide__getDiagnostics",
+      "Bash(python3:*)",
+      "Bash(if [ ! -d \"docs\" ])",
+      "Bash(then mkdir docs)",
+      "Bash(else echo \"docs directory already exists\")",
+      "Bash(fi)",
+      "Bash(uv run ruff:*)",
+      "Bash(uv pip list:*)"
     ],
     "deny": [],
     "ask": []

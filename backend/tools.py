@@ -1,8 +1,3 @@
-"""
-Tools for the assistant backend.
-
-This module defines tools using the Anthropic tool format (no third-party agent frameworks).
-"""
 import hashlib
 import urllib.parse
 import httpx
@@ -15,7 +10,6 @@ from config import settings
 
 
 async def _get_usd_jpy_rate() -> float:
-    """Fetch current USD to JPY exchange rate."""
     try:
         async with httpx.AsyncClient() as client:
             response = await client.get(
@@ -30,7 +24,6 @@ async def _get_usd_jpy_rate() -> float:
 
 
 def _extract_price(price_text: str, usd_to_jpy_rate: float = 150.0) -> int:
-    """Extract numeric price from price string, converting USD to JPY if needed."""
     import re
 
     # Check if it's USD format (US$X.XX)
@@ -50,17 +43,6 @@ def _extract_price(price_text: str, usd_to_jpy_rate: float = 150.0) -> int:
 
 
 async def searchProducts(query: str, limit: int = 3) -> dict:
-    """
-    Search for products on Mercari Japan using ScrapingBee.
-
-    Args:
-        query: Search term for products (e.g., "Nintendo Switch", "iPhone 15")
-        limit: Maximum number of results to return (default: 10)
-
-    Returns:
-        DataTable-compatible dict with columns and product data including
-        name, price (JPY), condition, seller, and listing URL
-    """
     # Generate a unique surface ID based on the query
     query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
 
