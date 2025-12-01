@@ -4,10 +4,11 @@ const nextConfig = {
     optimizePackageImports: ["@assistant-ui/react"],
   },
   async rewrites() {
+    const apiUrl = process.env.BACKEND_URL || "http://localhost:8001";
     return [
       {
         source: "/assistant/:path*",
-        destination: "http://localhost:8000/assistant/:path*",
+        destination: `${apiUrl}/assistant/:path*`,
       },
     ];
   },

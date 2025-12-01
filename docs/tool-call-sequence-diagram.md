@@ -11,7 +11,7 @@ The application is a full-stack AI assistant that enables product search on Merc
 
 The tool call flow demonstrates an **agentic loop pattern** where the AI can:
 1. Receive a user message
-2. Decide to call tools (e.g., searchProducts)
+2. Decide to call tools (e.g., search_products)
 3. Execute the tools and receive results
 4. Continue the conversation or make additional tool calls as needed
 5. Return the final response to the user
@@ -48,7 +48,7 @@ sequenceDiagram
     RP-->>FE: Updates UI with text
 
     API-->>AL: SSE Stream: tool_use block detected
-    AL->>AL: Detects tool call (searchProducts)
+    AL->>AL: Detects tool call (search_products)
     AL-->>BE: Yields ("tool_call_start", {id, name})
     BE-->>RP: SSE: tool_call_start event
     RP-->>FE: Shows "Executing tool..." state
@@ -59,7 +59,7 @@ sequenceDiagram
 
     Note over AL,ES: Phase 4: Tool Execution
     AL->>AL: Gets final message with complete tool_use
-    AL->>TE: execute_tool("searchProducts", args)
+    AL->>TE: execute_tool("search_products", args)
     TE->>ES: HTTP Request to ScrapingBee<br/>for Mercari Japan search
     ES-->>TE: Returns HTML response
     TE->>TE: Parses HTML with BeautifulSoup
@@ -101,7 +101,7 @@ The backend receives the request, extracts the user message from the command, an
 ### Phase 3: AI Response & Tool Detection
 The agent loop sends a streaming request to the Anthropic API with the conversation history and available tools. As the API responds:
 - **Text chunks** are streamed back to the frontend for immediate display
-- **Tool use blocks** are detected when the AI decides to call a tool (e.g., `searchProducts`)
+- **Tool use blocks** are detected when the AI decides to call a tool (e.g., `search_products`)
 - **Tool arguments** are streamed as partial JSON and accumulated
 
 ### Phase 4: Tool Execution
