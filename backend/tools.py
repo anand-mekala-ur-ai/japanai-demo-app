@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from scrapingbee import ScrapingBeeClient
 
 from config import settings
+from models import SearchProductsInput
 
 
 def _extract_price(price_text: str) -> int:
@@ -173,32 +174,17 @@ async def search_products(query: str, limit: int = 3) -> dict:
         }
 
 
-# Tool definitions in Anthropic format
-TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "search_products",
-        "description": (
-            "Search for products on Mercari Japan marketplace. "
-            "Returns a list of products with name, price (JPY), condition, "
-            "seller, and listing URL."
-        ),
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search term for products (e.g.,'iPhone 15')",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return. Defaults to 10.",
-                    "default": 10,
-                },
-            },
-            "required": ["query"],
-        },
-    }
-]
+def get_tools() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "search_products",
+            "description": (
+                "Search for products on Mercari Japan marketplace. "
+                "Returns a list of products with name, price (JPY), and listing URL."
+            ),
+            "input_schema": SearchProductsInput.model_json_schema(),
+        }
+    ]
 
 
 async def execute_tool(name: str, args: dict[str, Any]) -> Any:

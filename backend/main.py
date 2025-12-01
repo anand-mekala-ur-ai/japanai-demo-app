@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from models import ChatRequest
-from tools import TOOLS, execute_tool
+from tools import get_tools, execute_tool
 from utils import (
     convert_langchain_to_anthropic,
     create_ai_message,
@@ -212,7 +212,7 @@ async def chat_endpoint(request: ChatRequest):
         current_tool_calls = []
 
         # Run the agent loop with full conversation history
-        async for event_type, data in run_agent(full_messages, TOOLS, request.system):
+        async for event_type, data in run_agent(full_messages, get_tools(), request.system):
             if event_type == "text_delta":
                 # Initialize AI message if this is the first text delta
                 if current_ai_message_index is None:

@@ -40,3 +40,8 @@ class ChatRequest(BaseModel):
         None, alias="runConfig", description="Run configuration"
     )
     state: Optional[dict[str, Any]] = Field(None, description="State")
+
+
+class SearchProductsInput(BaseModel):
+    query: str = Field(description="Search term for products (e.g., 'iPhone 15')")
+    limit: int = Field(default=3, description="Maximum number of results to return")
