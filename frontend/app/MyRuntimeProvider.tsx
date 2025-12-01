@@ -16,72 +16,24 @@ import { z } from "zod";
 
 import { makeAssistantToolUI } from '@assistant-ui/react';
 import { DataTable, parseSerializableDataTable } from '@/components/tool-ui/data-table';
+import { Loader2 } from "lucide-react";
 
-// Frontend tool with execute function
-const WeatherTool = makeAssistantTool({
-  type: "frontend",
-  toolName: "web_search",
-  description: "Get the current weather for a city",
-  parameters: z.object({
-    location: z.string().describe("The city to get weather for"),
-    unit: z
-      .enum(["celsius", "fahrenheit"])
-      .optional()
-      .describe("Temperature unit"),
-  }),
-  execute: async ({ location, unit = "celsius" }) => {
-    console.log(`Getting weather for ${location} in ${unit}`);
-    // Simulate API call
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-
-    const temp = Math.floor(Math.random() * 30) + 10;
-    const conditions = ["sunny", "cloudy", "rainy", "partly cloudy"];
-    const condition = conditions[Math.floor(Math.random() * conditions.length)];
-
-    return {
-      location,
-      temperature: temp,
-      unit,
-      condition,
-      humidity: Math.floor(Math.random() * 40) + 40,
-      windSpeed: Math.floor(Math.random() * 20) + 5,
-    };
-  },
-  streamCall: async (reader) => {
-    console.log("streamCall", reader);
-    const city = await reader.args.get("location");
-    console.log("location", city);
-
-    const args = await reader.args.get();
-    console.log("args", args);
-
-    const result = await reader.response.get();
-    console.log("result", result);
-  },
-});
 
 export const SearchProductsUI = makeAssistantToolUI({
   toolName: 'searchProducts',
   render: ({ result }) => {
-    // Handle loading state when result is not yet available
+
+    // Loading state - spinner with box and query display
     if (!result) {
       return (
-        <DataTable
-          rowIdKey="id"
-          surfaceId="mercari-search-loading"
-          columns={[
-            { key: 'name', label: 'Product', priority: 'primary' },
-            { key: 'price', label: 'Price' },
-            { key: 'condition', label: 'Condition' },
-            { key: 'seller', label: 'Seller' },
-            { key: 'url', label: 'Link' },
-          ]}
-          data={[]}
-          isLoading={true}
-        />
+        <div className="flex min-h-[68px] items-center gap-3 rounded-md border-2 border-blue-400 bg-muted/50 p-3">
+          <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+          <span>Searching Products in Mercari Japan</span>
+        </div>
       );
     }
-    // Parse JSON string if result is a string
+
+    // Success state - render DataTable
     const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
     const props = parseSerializableDataTable(parsedResult);
     return <DataTable rowIdKey="id" {...props} />;
@@ -160,7 +112,6 @@ export function MyRuntimeProvider({ children }: MyRuntimeProviderProps) {
 
   return (
     <AssistantRuntimeProvider runtime={runtime}>
-      <WeatherTool />
       <SearchProductsUI />
 
       {children}

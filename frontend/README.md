@@ -1,4 +1,4 @@
-# Assistant Transport Example
+# Mercari Japan AI Shopper
 
 This example demonstrates how to use assistant-ui with the `useAssistantTransportRuntime` hook to connect to a custom backend server that implements the assistant-transport protocol.
 

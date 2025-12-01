@@ -16,6 +16,7 @@ export {
   BadgeValue,
   StatusBadge,
   ArrayValue,
+  ImageValue,
 } from "./formatters";
 export { parseSerializableDataTable } from "./schema";
 

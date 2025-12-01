@@ -1,11 +1,3 @@
-#!/usr/bin/env python3
-"""
-Assistant Transport Backend - FastAPI + assistant-stream + Direct Anthropic SDK
-
-This implementation uses the Anthropic SDK directly without third-party agent frameworks
-(no LangChain, LangGraph, or similar libraries).
-"""
-
 import os
 import json
 from typing import Dict, Any, List, Optional, Union, AsyncGenerator
@@ -15,17 +7,14 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from dotenv import load_dotenv
 
 from anthropic import AsyncAnthropic
 
 from assistant_stream.serialization import DataStreamResponse
 from assistant_stream import create_run
 
+from config import settings
 from tools import TOOLS, execute_tool
-
-# Load environment variables
-load_dotenv()
 
 
 # Helper functions to convert Anthropic messages to LangChain format
@@ -179,8 +168,8 @@ async def run_agent(
     while True:
         # Build the API request
         request_kwargs = {
-            "model": "claude-sonnet-4-5-20250929",
-            "max_tokens": 4096,
+            "model": settings.ANTHROPIC_MODEL,
+            "max_tokens": settings.MAX_TOKENS,
             "messages": messages,
         }
 
@@ -290,7 +279,7 @@ app = FastAPI(
 )
 
 # Configure CORS
-cors_origins = ["*"]
+cors_origins = settings.cors_origins_list
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
@@ -349,16 +338,6 @@ async def chat_endpoint(request: ChatRequest):
                 controller.state["messages"].append(
                     create_tool_message(command.toolCallId, result_content)
                 )
-
-        # Check if API key is available
-        if not os.getenv("ANTHROPIC_API_KEY"):
-            print("Warning: No ANTHROPIC_API_KEY found - using mock response")
-            mock_text = (
-                "I would help you, but no ANTHROPIC_API_KEY is configured. "
-                "Please set your API key in the .env file."
-            )
-            controller.state["messages"].append(create_ai_message(mock_text))
-            return
 
         # Convert existing conversation history to Anthropic format
         # and prepend to input_messages for full context
@@ -457,14 +436,14 @@ async def health_check():
 
 def main():
     """Main entry point for running the server."""
-    host = os.getenv("HOST", "0.0.0.0")
-    port = int(os.getenv("PORT", "8010"))
-    debug = os.getenv("DEBUG", "false").lower() == "true"
-    log_level = os.getenv("LOG_LEVEL", "info").lower()
+    host = settings.HOST
+    port = settings.PORT
+    debug = settings.DEBUG
+    log_level = settings.LOG_LEVEL.lower()
 
     print(f"Starting Assistant Transport Backend on {host}:{port}")
     print(f"Debug mode: {debug}")
-    print(f"CORS origins: {cors_origins}")
+    print(f"CORS origins: {settings.cors_origins_list}")
 
     uvicorn.run(
         "main:app",

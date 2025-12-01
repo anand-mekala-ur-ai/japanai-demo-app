@@ -3,7 +3,6 @@ Tools for the assistant backend.
 
 This module defines tools using the Anthropic tool format (no third-party agent frameworks).
 """
-import os
 import hashlib
 import urllib.parse
 import httpx
@@ -11,74 +10,8 @@ from bs4 import BeautifulSoup
 from scrapingbee import ScrapingBeeClient
 from typing import Dict, Any, List
 
+from config import settings
 
-def _get_weather_condition(code: int) -> str:
-    """Map WMO weather code to human-readable condition."""
-    if code == 0:
-        return "sunny"
-    elif code in [1, 2, 3]:
-        return "partly cloudy"
-    elif code in [45, 48]:
-        return "foggy"
-    elif code in [51, 53, 55, 56, 57, 61, 63, 65, 66, 67, 80, 81, 82]:
-        return "rainy"
-    elif code in [71, 73, 75, 77, 85, 86]:
-        return "snowy"
-    elif code in [95, 96, 99]:
-        return "thunderstorm"
-    else:
-        return "cloudy"
-
-
-async def web_search(location: str, unit: str = "celsius") -> dict:
-    """
-    Get the current weather for a city.
-
-    Args:
-        location: The city to get weather for
-        unit: Temperature unit, either "celsius" or "fahrenheit"
-
-    Returns:
-        Weather data including temperature, condition, humidity, and wind speed
-    """
-    async with httpx.AsyncClient() as client:
-        # Step 1: Geocode the location to get coordinates
-        geo_url = f"https://geocoding-api.open-meteo.com/v1/search?name={location}&count=1"
-        geo_response = await client.get(geo_url)
-        geo_data = geo_response.json()
-
-        if not geo_data.get("results"):
-            return {"error": f"Location '{location}' not found"}
-
-        lat = geo_data["results"][0]["latitude"]
-        lon = geo_data["results"][0]["longitude"]
-        resolved_name = geo_data["results"][0]["name"]
-
-        # Step 2: Get weather data
-        temp_unit = "fahrenheit" if unit == "fahrenheit" else "celsius"
-        weather_url = (
-            f"https://api.open-meteo.com/v1/forecast?"
-            f"latitude={lat}&longitude={lon}"
-            f"&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m"
-            f"&temperature_unit={temp_unit}"
-        )
-        weather_response = await client.get(weather_url)
-        weather_data = weather_response.json()
-
-        current = weather_data.get("current", {})
-
-        # Map weather code to condition
-        weather_code = current.get("weather_code", 0)
-        condition = _get_weather_condition(weather_code)
-
-        return {
-            "location": resolved_name,
-            "temperature": current.get("temperature_2m", 0),
-            "unit": unit,
-            "condition": condition,
-            "humidity": current.get("relative_humidity_2m", 0),
-            "windSpeed": current.get("wind_speed_10m", 0)
-        }
 
 
 async def _get_usd_jpy_rate() -> float:
@@ -116,7 +49,7 @@ def _extract_price(price_text: str, usd_to_jpy_rate: float = 150.0) -> int:
         return 0
 
 
-async def searchProducts(query: str, limit: int = 10) -> dict:
+async def searchProducts(query: str, limit: int = 3) -> dict:
     """
     Search for products on Mercari Japan using ScrapingBee.
 
@@ -133,14 +66,13 @@ async def searchProducts(query: str, limit: int = 10) -> dict:
 
     # Define columns for the DataTable
     columns = [
+        {"key": "image", "label": "Image", "format": {"kind": "image", "width": "160px", "height": "160px"}},
         {"key": "name", "label": "Product", "priority": "primary"},
         {"key": "price", "label": "Price", "format": {"kind": "currency", "currency": "JPY"}},
-        {"key": "condition", "label": "Condition"},
-        {"key": "seller", "label": "Seller"},
-        {"key": "url", "label": "Link", "format": {"kind": "link"}},
+        {"key": "link", "label": "Link", "format": {"kind": "link", "hrefKey": "url", "external": True}},
     ]
 
-    api_key = os.getenv("SCRAPINGBEE_API_KEY")
+    api_key = settings.SCRAPINGBEE_API_KEY
     if not api_key:
         return {
             "surfaceId": f"mercari-search-{query_hash}",
@@ -207,6 +139,23 @@ async def searchProducts(query: str, limit: int = 10) -> dict:
             else:
                 name = link.get_text(strip=True)
 
+            # Extract image URL
+            image_url = ""
+            img_elem = link.select_one('img')
+            if img_elem:
+                image_url = (
+                    img_elem.get('src') or
+                    img_elem.get('data-src') or
+                    img_elem.get('data-lazy-src') or
+                    ''
+                )
+                # Handle relative URLs
+                if image_url and not image_url.startswith('http'):
+                    if image_url.startswith('//'):
+                        image_url = f"https:{image_url}"
+                    elif image_url.startswith('/'):
+                        image_url = f"https://jp.mercari.com{image_url}"
+
             # Skip if name is too short or looks like navigation
             if len(name) < 3 or name in ["詳細を見る", "もっと見る"]:
                 continue
@@ -219,11 +168,11 @@ async def searchProducts(query: str, limit: int = 10) -> dict:
 
             products.append({
                 "id": item_id,
+                "image": image_url,
                 "name": name[:100],  # Truncate long names
                 "price": price,
-                "condition": "-",
-                "seller": "-",
-                "url": f"https://jp.mercari.com/item/{item_id}",
+                "link": "View Product",  # Display text for the link
+                "url": f"https://jp.mercari.com/item/{item_id}",  # Actual URL (used by hrefKey)
             })
 
         return {
@@ -243,25 +192,6 @@ async def searchProducts(query: str, limit: int = 10) -> dict:
 
 # Tool definitions in Anthropic format
 TOOLS: List[Dict[str, Any]] = [
-    {
-        "name": "web_search",
-        "description": "Get the current weather for a city. Returns temperature, condition, humidity, and wind speed.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "location": {
-                    "type": "string",
-                    "description": "The city to get weather for (e.g., 'Tokyo', 'New York')"
-                },
-                "unit": {
-                    "type": "string",
-                    "enum": ["celsius", "fahrenheit"],
-                    "description": "Temperature unit, either 'celsius' or 'fahrenheit'. Defaults to 'celsius'."
-                }
-            },
-            "required": ["location"]
-        }
-    },
     {
         "name": "searchProducts",
         "description": "Search for products on Mercari Japan marketplace. Returns a list of products with name, price (JPY), condition, seller, and listing URL.",
@@ -285,25 +215,10 @@ TOOLS: List[Dict[str, Any]] = [
 
 
 async def execute_tool(name: str, args: Dict[str, Any]) -> Any:
-    """
-    Execute a tool by name with given arguments.
-
-    Args:
-        name: The name of the tool to execute
-        args: Dictionary of arguments to pass to the tool
-
-    Returns:
-        The result from the tool execution
-    """
-    if name == "web_search":
-        return await web_search(
-            location=args.get("location", ""),
-            unit=args.get("unit", "celsius")
-        )
-    elif name == "searchProducts":
+    if name == "searchProducts":
         return await searchProducts(
             query=args.get("query", ""),
-            limit=args.get("limit", 10)
+            limit=args.get("limit", 3)
         )
     else:
         return {"error": f"Unknown tool: {name}"}

@@ -74,6 +74,13 @@ const formatSchema = z.discriminatedUnion("kind", [
     kind: z.literal("array"),
     maxVisible: z.number().optional(),
   }),
+  z.object({
+    kind: z.literal("image"),
+    width: z.string().optional(),
+    height: z.string().optional(),
+    rounded: z.boolean().optional(),
+    alt: z.string().optional(),
+  }),
 ]);
 
 export const serializableColumnSchema = z.object({
