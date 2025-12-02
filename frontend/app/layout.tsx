@@ -18,7 +18,7 @@ export default function RootLayout({
         <div className="flex h-screen flex-col">
           <header className="border-b bg-background px-4 py-2">
             <h1 className="font-semibold text-lg">
-              Mercari Japan AI Shopper
+              Japanai Mercari Search
             </h1>
           </header>
           <main className="flex-1 overflow-hidden">{children}</main>

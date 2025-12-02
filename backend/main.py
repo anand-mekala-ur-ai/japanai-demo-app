@@ -127,13 +127,13 @@ async def run_agent(
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("Starting Assistant Transport Backend (Direct Anthropic SDK)...")
+    print("Starting Japanai Mercari Search Backend (Direct Anthropic SDK)...")
     yield
-    print("Shutting down Assistant Transport Backend...")
+    print("Shutting down Japanai Mercari Search Backend...")
 
 # Create FastAPI app
 app = FastAPI(
-    title="Assistant Transport Backend",
+    title="Japanai Mercari Search Backend",
     description="A server implementing the assistant-transport protocol with direct Anthropic SDK",
     version="0.2.0",
     lifespan=lifespan,
@@ -283,7 +283,7 @@ async def chat_endpoint(request: ChatRequest):
 
 
 def main():
-    print(f"Starting Assistant Transport Backend on {settings.HOST}:{settings.PORT}")
+    print(f"Starting Japanai Mercari Search Backend on {settings.HOST}:{settings.PORT}")
     print(f"Debug mode: {settings.DEBUG}")
 
     uvicorn.run(

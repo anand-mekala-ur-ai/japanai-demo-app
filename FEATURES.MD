@@ -13,5 +13,6 @@ tech used
 2. 
 
 how to improve it
-1. currently the demo is working with only one tool call, however to implements a robust and extensive products search on mercur japan capabilites..we have to devlop a mcp server with mutiple tools in it.
+1. currently the demo is working with only one tool call, however to implements a robust and extensive products search on mercuri japan capabilites..we have to devlop a mcp server with mutiple tools (multiple apis) in it.
 2. for chat persistance we have to implement state management to keep the thread of every chat execution for this we can leverage langgraph thread or we can create our custom thread management by connecting to external db
+3. the edit chat query and reload of chat response funtionality

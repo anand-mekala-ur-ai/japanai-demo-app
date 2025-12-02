@@ -28,7 +28,7 @@ export const SearchProductsUI = makeAssistantToolUI({
       return (
         <div className="flex min-h-[68px] items-center gap-3 rounded-md border-2 border-blue-400 bg-muted/50 p-3">
           <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
-          <span>Searching Products in Mercari Japan</span>
+          <span>Searching Mercari Japan</span>
         </div>
       );
     }

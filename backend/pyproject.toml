@@ -1,7 +1,7 @@
 [project]
-name = "assistant-transport-backend"
+name = "japanai-mercari-search-backend"
 version = "0.2.0"
-description = "Assistant Transport Backend with direct Anthropic SDK"
+description = "Japanai Mercari Search Backend"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

@@ -1,6 +1,6 @@
-# Assistant Transport Backend with LangGraph
+# Japanai Mercari Search Backend
 
-This is a LangGraph-based implementation of the assistant transport backend, providing streaming chat capabilities using FastAPI, assistant-stream, and LangGraph.
+This is a backend providing streaming chat capabilities using FastAPI, assistant-stream, and LangGraph for searching Mercari Japan listings.
 
 ## Features
 
@@ -15,7 +15,7 @@ This is a LangGraph-based implementation of the assistant transport backend, pro
 
 1. Initialize and install dependencies:
 ```bash
-uv init --name assistant-transport-backend-langgraph --package
+uv init --name japanai-mercari-search-backend --package
 uv add fastapi uvicorn[standard] assistant-stream pydantic python-dotenv langgraph langchain langchain-core langchain-openai httpx
 # Or simply:
 uv sync
