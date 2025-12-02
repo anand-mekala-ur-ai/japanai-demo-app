@@ -1,22 +1,22 @@
-# Tool Call Request Processing - Sequence Diagram
+# As-Is Architecture Guide
 
-This document provides a high-level UML sequence diagram that visualizes how a tool call request flows through the application, from user input in the frontend to the final response rendering after tool execution.
+This guide documents the current architecture of the Mercari Japan Product Search Assistant, explaining how requests flow through the system from user input to final response.
 
-## Overview
+## System Overview
 
 The application is a full-stack AI assistant that enables product search on Mercari Japan. It consists of:
 - **Frontend**: Next.js with React, using `@assistant-ui/react` library
 - **Backend**: FastAPI with Python, using the Anthropic SDK
 - **Communication**: HTTP POST with Server-Sent Events (SSE) streaming via `assistant-stream` protocol
 
-The tool call flow demonstrates an **agentic loop pattern** where the AI can:
+The system implements an **agentic loop pattern** where the AI can:
 1. Receive a user message
 2. Decide to call tools (e.g., search_products)
 3. Execute the tools and receive results
 4. Continue the conversation or make additional tool calls as needed
 5. Return the final response to the user
 
-## Key Phases Explained
+## Request Flow
 
 ### Phase 1: Request Initiation
 The user types a message in the chat interface. The Thread UI captures this input, and the Runtime Provider wraps it in an `AddMessageCommand` and sends it via HTTP POST to the backend's `/assistant` endpoint.
@@ -41,10 +41,10 @@ The tool result is then streamed back to the frontend, which renders it as a Dat
 
 ### Phase 5: Context Update & Loop
 The agent loop appends both the assistant's tool use and the tool result to the conversation context. It then:
-- **If more tool calls are needed**: Makes another request to the Anthropic API (creating an agentic loop)
+- **If more tool calls are needed**: Makes another request to the Anthropic API (continuing the agentic loop)
 - **If no more tool calls**: Finalizes the response and completes the stream
 
-This agentic loop pattern allows the AI to make multiple tool calls in sequence or even in response to previous tool results.
+This agentic loop pattern allows the AI to make multiple tool calls in sequence or respond dynamically based on previous tool results.
 
 ### Phase 6: Frontend Response Handling
 The Runtime Provider receives the SSE stream, converts the state from LangChain format to Thread messages, and updates the UI. The user sees the complete conversation including text responses and tool results rendered as interactive DataTables.
@@ -86,4 +86,4 @@ The agent loop continues making requests to the Anthropic API until no more `too
 - Make decisions based on tool results
 - Refine its approach dynamically
 
-This pattern is crucial for complex tasks that require multiple steps or data gathering operations.
+This pattern is essential for complex tasks that require multiple steps or data gathering operations.

@@ -6,8 +6,8 @@ def create_human_message(text: str) -> dict:
     return {"type": "human", "content": text}
 
 
-def create_ai_message(text: str = "", tool_calls: list = None) -> dict:
-    msg = {"type": "ai", "content": text}
+def create_ai_message(text: str = "", tool_calls: list[Any] | None = None) -> dict[str, Any]:
+    msg: dict[str, Any] = {"type": "ai", "content": text}
     if tool_calls:
         msg["tool_calls"] = tool_calls
     return msg

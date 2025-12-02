@@ -36,6 +36,12 @@ export const SearchProductsUI = makeAssistantToolUI({
     // Success state - render DataTable
     const parsedResult = typeof result === 'string' ? JSON.parse(result) : result;
     const props = parseSerializableDataTable(parsedResult);
+
+    // Don't render empty table
+    if (!props.data || props.data.length === 0) {
+      return null;
+    }
+
     return <DataTable rowIdKey="id" {...props} />;
   },
 });

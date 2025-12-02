@@ -1,4 +1,5 @@
 import hashlib
+import re
 import urllib.parse
 from typing import Any
 
@@ -10,8 +11,6 @@ from models import SearchProductsInput
 
 
 def _extract_price(price_text: str) -> int:
-    import re
-
     # Extract just the numbers (remove commas, spaces, etc.)
     cleaned = re.sub(r"[^\d]", "", price_text)
     try:
@@ -41,14 +40,6 @@ async def search_products(query: str, limit: int = 3) -> dict:
     ]
 
     api_key = settings.SCRAPINGBEE_API_KEY
-    if not api_key:
-        return {
-            "surfaceId": f"mercari-search-{query_hash}",
-            "columns": columns,
-            "data": [],
-            "error": "SCRAPINGBEE_API_KEY not configured",
-        }
-
     try:
         client = ScrapingBeeClient(api_key=api_key)
 
@@ -61,8 +52,7 @@ async def search_products(query: str, limit: int = 3) -> dict:
             params={
                 "render_js": "true",
                 "wait": 5000,  # Wait 5 seconds for JS to load
-                "premium_proxy": "true",  # Required for geolocation
-                "country_code": "jp",  # Japan proxy for JPY prices
+                # Japan proxy for JPY prices
             },
         )
 
@@ -76,7 +66,7 @@ async def search_products(query: str, limit: int = 3) -> dict:
 
         # Parse HTML with BeautifulSoup
         soup = BeautifulSoup(response.content, "html.parser")
-        products = []
+        products: list[dict[str, Any]] = []
 
         # Find product links - Mercari uses anchor tags with /item/ in href
         product_links = soup.select('a[href*="/item/"]')
@@ -86,7 +76,8 @@ async def search_products(query: str, limit: int = 3) -> dict:
             if len(products) >= limit:
                 break
 
-            href = link.get("href", "")
+            href_attr = link.get("href", "")
+            href = str(href_attr) if href_attr else ""
             if "/item/" not in href:
                 continue
 
@@ -110,22 +101,16 @@ async def search_products(query: str, limit: int = 3) -> dict:
             image_url = ""
             img_elem = link.select_one("img")
             if img_elem:
-                image_url = (
-                    img_elem.get("src")
-                    or img_elem.get("data-src")
-                    or img_elem.get("data-lazy-src")
-                    or ""
+                img_src = (
+                    img_elem.get("src") or img_elem.get("data-src") or img_elem.get("data-lazy-src")
                 )
+                image_url = str(img_src) if img_src else ""
                 # Handle relative URLs
                 if image_url and not image_url.startswith("http"):
                     if image_url.startswith("//"):
                         image_url = f"https:{image_url}"
                     elif image_url.startswith("/"):
                         image_url = f"https://jp.mercari.com{image_url}"
-
-            # Skip if name is too short or looks like navigation
-            if len(name) < 3 or name in ["詳細を見る", "もっと見る"]:
-                continue
 
             # Try to extract price from merPrice span
             price = 0

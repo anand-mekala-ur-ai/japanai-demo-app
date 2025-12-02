@@ -113,13 +113,13 @@ const ThreadWelcomeSuggestions: FC = () => {
         },
         {
           title: "Find watches",
-          label: "Search for value for money Rolex watches",
-          action: "Search for value for money Rolex watches",
+          label: "Search for Swatch watches",
+          action: "Search for Swatch watches",
         },
         {
           title: "Browse books",
           label: "Browse manga",
-          action: "Browse manga",
+          action: "Browse One Piece manga",
         },
         {
           title: "Discover beauty products",

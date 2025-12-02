@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
 from models import ChatRequest
-from tools import get_tools, execute_tool
+from tools import execute_tool, get_tools
 from utils import (
     convert_langchain_to_anthropic,
     create_ai_message,
@@ -47,7 +47,7 @@ async def run_agent(
         text_content = ""
 
         # Stream the response
-        async with client.messages.stream(**request_kwargs) as stream:
+        async with client.messages.stream(**request_kwargs) as stream:  # type: ignore[arg-type]
             async for event in stream:
                 # Handle text deltas
                 if event.type == "content_block_delta":
@@ -85,13 +85,18 @@ async def run_agent(
             yield ("tool_call_args", {"id": block.id, "name": block.name, "args": block.input})
 
         # Add assistant message to history (with both text and tool_use blocks)
-        assistant_content = []
-        for block in final_message.content:
-            if block.type == "text":
-                assistant_content.append({"type": "text", "text": block.text})
-            elif block.type == "tool_use":
+        assistant_content: list[dict[str, Any]] = []
+        for content_block in final_message.content:
+            if content_block.type == "text":
+                assistant_content.append({"type": "text", "text": content_block.text})
+            elif content_block.type == "tool_use":
                 assistant_content.append(
-                    {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+                    {
+                        "type": "tool_use",
+                        "id": content_block.id,
+                        "name": content_block.name,
+                        "input": content_block.input,
+                    }
                 )
 
         messages.append({"role": "assistant", "content": assistant_content})
@@ -186,16 +191,16 @@ async def chat_endpoint(request: ChatRequest):
                     create_tool_message(command.tool_call_id, result_content)
                 )
 
-        # Convert existing conversation history to Anthropic format
+        # Convert existng conversation history to Anthropic format
         # and prepend to input_messages for full context
         # Note: controller.state["messages"] is a proxy object, convert to list for slicing
         state_messages = list(controller.state["messages"])
         num_new_messages = len(input_messages)
         if num_new_messages > 0:
-            # Exclude the newly added messages from history (they're in input_messages)
+            # Exclude the newly added mesages from history (they're in input_messages)
             history = state_messages[:-num_new_messages]
         else:
-            # No new messages added, use full state as history
+            # No new messaes added, use full state as history
             history = state_messages
         history_messages = convert_langchain_to_anthropic(history)
         full_messages = history_messages + input_messages
@@ -206,7 +211,7 @@ async def chat_endpoint(request: ChatRequest):
 
         # Track current tool call for streaming
         current_tool_call = None
-        # Track the current assistant message for LangChain format
+        # Track the current assstant message for LangChain format
         current_ai_message_index = None
         current_ai_text = ""
         current_tool_calls = []
@@ -219,7 +224,7 @@ async def chat_endpoint(request: ChatRequest):
                     current_ai_message_index = len(controller.state["messages"])
                     controller.state["messages"].append(create_ai_message(""))
 
-                # Accumulate text and update state
+                # Accumuate text and update state
                 current_ai_text += data
                 controller.state["messages"][current_ai_message_index]["content"] = current_ai_text
 
