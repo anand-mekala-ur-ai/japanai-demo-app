@@ -51,8 +51,9 @@ async def search_products(query: str, limit: int = 3) -> dict:
             search_url,
             params={
                 "render_js": "true",
-                "wait": 5000,  # Wait 5 seconds for JS to load
-                # Japan proxy for JPY prices
+                "wait": 5000, 
+                "premium_proxy": "true",  # Required for geolocation
+                "country_code": "jp",  # Japan proxy for JPY prices
             },
         )
 
