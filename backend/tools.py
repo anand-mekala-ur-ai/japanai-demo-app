@@ -1,57 +1,43 @@
 import hashlib
 import urllib.parse
-import httpx
+from typing import Any
+
 from bs4 import BeautifulSoup
 from scrapingbee import ScrapingBeeClient
-from typing import Dict, Any, List
 
 from config import settings
+from models import SearchProductsInput
 
 
-
-async def _get_usd_jpy_rate() -> float:
-    try:
-        async with httpx.AsyncClient() as client:
-            response = await client.get(
-                "https://api.exchangerate-api.com/v4/latest/USD"
-            )
-            if response.status_code == 200:
-                data = response.json()
-                return data.get("rates", {}).get("JPY", 150.0)
-    except Exception:
-        pass
-    return 150.0  # Fallback rate
-
-
-def _extract_price(price_text: str, usd_to_jpy_rate: float = 150.0) -> int:
+def _extract_price(price_text: str) -> int:
     import re
 
-    # Check if it's USD format (US$X.XX)
-    if 'US$' in price_text or 'USD' in price_text:
-        match = re.search(r'[\d,]+\.?\d*', price_text)
-        if match:
-            usd_price = float(match.group().replace(',', ''))
-            return int(usd_price * usd_to_jpy_rate)
-        return 0
-
-    # JPY format: remove ¥, commas, 円
-    cleaned = re.sub(r'[¥,\s円]', '', price_text)
+    # Extract just the numbers (remove commas, spaces, etc.)
+    cleaned = re.sub(r"[^\d]", "", price_text)
     try:
-        return int(cleaned)
+        return int(cleaned) if cleaned else 0
     except ValueError:
         return 0
 
 
-async def searchProducts(query: str, limit: int = 3) -> dict:
+async def search_products(query: str, limit: int = 3) -> dict:
     # Generate a unique surface ID based on the query
     query_hash = hashlib.md5(query.encode()).hexdigest()[:8]
 
     # Define columns for the DataTable
     columns = [
-        {"key": "image", "label": "Image", "format": {"kind": "image", "width": "160px", "height": "160px"}},
+        {
+            "key": "image",
+            "label": "Image",
+            "format": {"kind": "image", "width": "160px", "height": "160px"},
+        },
         {"key": "name", "label": "Product", "priority": "primary"},
-        {"key": "price", "label": "Price", "format": {"kind": "currency", "currency": "JPY"}},
-        {"key": "link", "label": "Link", "format": {"kind": "link", "hrefKey": "url", "external": True}},
+        {"key": "price", "label": "Price"},
+        {
+            "key": "link",
+            "label": "Link",
+            "format": {"kind": "link", "hrefKey": "url", "external": True},
+        },
     ]
 
     api_key = settings.SCRAPINGBEE_API_KEY
@@ -60,7 +46,7 @@ async def searchProducts(query: str, limit: int = 3) -> dict:
             "surfaceId": f"mercari-search-{query_hash}",
             "columns": columns,
             "data": [],
-            "error": "SCRAPINGBEE_API_KEY not configured"
+            "error": "SCRAPINGBEE_API_KEY not configured",
         }
 
     try:
@@ -73,8 +59,10 @@ async def searchProducts(query: str, limit: int = 3) -> dict:
         response = client.get(
             search_url,
             params={
-                'render_js': 'true',
-                'wait': 3000,  # Wait 3 seconds for JS to load
+                "render_js": "true",
+                "wait": 5000,  # Wait 5 seconds for JS to load
+                "premium_proxy": "true",  # Required for geolocation
+                "country_code": "jp",  # Japan proxy for JPY prices
             },
         )
 
@@ -83,15 +71,12 @@ async def searchProducts(query: str, limit: int = 3) -> dict:
                 "surfaceId": f"mercari-search-{query_hash}",
                 "columns": columns,
                 "data": [],
-                "error": f"ScrapingBee error: {response.status_code}"
+                "error": f"ScrapingBee error: {response.status_code}",
             }
 
         # Parse HTML with BeautifulSoup
         soup = BeautifulSoup(response.content, "html.parser")
         products = []
-
-        # Get current exchange rate for USD to JPY conversion
-        usd_to_jpy_rate = await _get_usd_jpy_rate()
 
         # Find product links - Mercari uses anchor tags with /item/ in href
         product_links = soup.select('a[href*="/item/"]')
@@ -123,19 +108,19 @@ async def searchProducts(query: str, limit: int = 3) -> dict:
 
             # Extract image URL
             image_url = ""
-            img_elem = link.select_one('img')
+            img_elem = link.select_one("img")
             if img_elem:
                 image_url = (
-                    img_elem.get('src') or
-                    img_elem.get('data-src') or
-                    img_elem.get('data-lazy-src') or
-                    ''
+                    img_elem.get("src")
+                    or img_elem.get("data-src")
+                    or img_elem.get("data-lazy-src")
+                    or ""
                 )
                 # Handle relative URLs
-                if image_url and not image_url.startswith('http'):
-                    if image_url.startswith('//'):
+                if image_url and not image_url.startswith("http"):
+                    if image_url.startswith("//"):
                         image_url = f"https:{image_url}"
-                    elif image_url.startswith('/'):
+                    elif image_url.startswith("/"):
                         image_url = f"https://jp.mercari.com{image_url}"
 
             # Skip if name is too short or looks like navigation
@@ -144,63 +129,66 @@ async def searchProducts(query: str, limit: int = 3) -> dict:
 
             # Try to extract price from merPrice span
             price = 0
-            price_elem = link.select_one('span.merPrice')
+            is_auction = False
+            price_elem = link.select_one('span[class*="merPrice"]')
             if price_elem:
-                price = _extract_price(price_elem.get_text(strip=True), usd_to_jpy_rate)
+                # Check if this is an auction item (現在 = "current bid")
+                currency_elem = price_elem.select_one('span[class*="currency__"]')
+                if currency_elem:
+                    currency_text = currency_elem.get_text(strip=True)
+                    is_auction = "現在" in currency_text
 
-            products.append({
-                "id": item_id,
-                "image": image_url,
-                "name": name[:100],  # Truncate long names
-                "price": price,
-                "link": "View Product",  # Display text for the link
-                "url": f"https://jp.mercari.com/item/{item_id}",  # Actual URL (used by hrefKey)
-            })
+                # Target the number span directly for more reliable extraction
+                number_elem = price_elem.select_one('span[class*="number__"]')
+                if number_elem:
+                    price_text = number_elem.get_text(strip=True)
+                    price = _extract_price(price_text)
+                else:
+                    price = _extract_price(price_elem.get_text(strip=True))
 
-        return {
-            "surfaceId": f"mercari-search-{query_hash}",
-            "columns": columns,
-            "data": products
-        }
+            # Format price string (yen symbol at end)
+            if is_auction:
+                price_str = f"現在 {price:,}¥"
+            else:
+                price_str = f"{price:,}¥"
+
+            products.append(
+                {
+                    "id": item_id,
+                    "image": image_url,
+                    "name": name[:100],
+                    "price": price_str,
+                    "link": "View Product",
+                    "url": f"https://jp.mercari.com/item/{item_id}",
+                }
+            )
+
+        return {"surfaceId": f"mercari-search-{query_hash}", "columns": columns, "data": products}
 
     except Exception as e:
         return {
             "surfaceId": f"mercari-search-{query_hash}",
             "columns": columns,
             "data": [],
-            "error": f"Search failed: {str(e)}"
+            "error": f"Search failed: {str(e)}",
         }
 
 
-# Tool definitions in Anthropic format
-TOOLS: List[Dict[str, Any]] = [
-    {
-        "name": "searchProducts",
-        "description": "Search for products on Mercari Japan marketplace. Returns a list of products with name, price (JPY), condition, seller, and listing URL.",
-        "input_schema": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search term for products (e.g., 'Nintendo Switch', 'iPhone 15')"
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Maximum number of results to return. Defaults to 10.",
-                    "default": 10
-                }
-            },
-            "required": ["query"]
+def get_tools() -> list[dict[str, Any]]:
+    return [
+        {
+            "name": "search_products",
+            "description": (
+                "Search for products on Mercari Japan marketplace. "
+                "Returns a list of products with name, price (JPY), and listing URL."
+            ),
+            "input_schema": SearchProductsInput.model_json_schema(),
         }
-    }
-]
+    ]
 
 
-async def execute_tool(name: str, args: Dict[str, Any]) -> Any:
-    if name == "searchProducts":
-        return await searchProducts(
-            query=args.get("query", ""),
-            limit=args.get("limit", 3)
-        )
+async def execute_tool(name: str, args: dict[str, Any]) -> Any:
+    if name == "search_products":
+        return await search_products(query=args.get("query", ""), limit=args.get("limit", 3))
     else:
         return {"error": f"Unknown tool: {name}"}

@@ -1,29 +1,29 @@
-import os
 import json
-from typing import Dict, Any, List, Optional, Union, AsyncGenerator
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any, Optional
+
 import uvicorn
+from anthropic import AsyncAnthropic
+from assistant_stream import create_run
+from assistant_stream.serialization import DataStreamResponse
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from anthropic import AsyncAnthropic
-from assistant_stream.serialization import DataStreamResponse
-from assistant_stream import create_run
+
 from config import settings
-from tools import TOOLS, execute_tool
+from models import ChatRequest
+from tools import get_tools, execute_tool
 from utils import (
-    create_human_message,
+    convert_langchain_to_anthropic,
     create_ai_message,
+    create_human_message,
     create_tool_message,
-    convert_langchain_to_anthropic
-)
-from models import (
-    ChatRequest
 )
 
 
 async def run_agent(
-    messages: List[Dict[str, Any]],
-    tools: List[Dict[str, Any]],
+    messages: list[dict[str, Any]],
+    tools: list[dict[str, Any]],
     system: Optional[str] = None,
 ) -> AsyncGenerator[tuple[str, Any], None]:
     client = AsyncAnthropic()
@@ -43,7 +43,7 @@ async def run_agent(
             request_kwargs["system"] = system
 
         # Track tool calls in the current response
-        current_tool_calls: Dict[int, Dict[str, Any]] = {}
+        current_tool_calls: dict[int, dict[str, Any]] = {}
         text_content = ""
 
         # Stream the response
@@ -66,7 +66,7 @@ async def run_agent(
                         current_tool_calls[event.index] = {
                             "id": tool_id,
                             "name": tool_name,
-                            "input": {}
+                            "input": {},
                         }
                         yield ("tool_call_start", {"id": tool_id, "name": tool_name})
 
@@ -74,10 +74,7 @@ async def run_agent(
             final_message = await stream.get_final_message()
 
         # Extract tool calls from the final message
-        tool_use_blocks = [
-            block for block in final_message.content
-            if block.type == "tool_use"
-        ]
+        tool_use_blocks = [block for block in final_message.content if block.type == "tool_use"]
 
         if not tool_use_blocks:
             # No tool calls - we're done
@@ -85,11 +82,7 @@ async def run_agent(
 
         # Yield complete tool call arguments
         for block in tool_use_blocks:
-            yield ("tool_call_args", {
-                "id": block.id,
-                "name": block.name,
-                "args": block.input
-            })
+            yield ("tool_call_args", {"id": block.id, "name": block.name, "args": block.input})
 
         # Add assistant message to history (with both text and tool_use blocks)
         assistant_content = []
@@ -97,12 +90,9 @@ async def run_agent(
             if block.type == "text":
                 assistant_content.append({"type": "text", "text": block.text})
             elif block.type == "tool_use":
-                assistant_content.append({
-                    "type": "tool_use",
-                    "id": block.id,
-                    "name": block.name,
-                    "input": block.input
-                })
+                assistant_content.append(
+                    {"type": "tool_use", "id": block.id, "name": block.name, "input": block.input}
+                )
 
         messages.append({"role": "assistant", "content": assistant_content})
 
@@ -110,16 +100,14 @@ async def run_agent(
         tool_results = []
         for block in tool_use_blocks:
             result = await execute_tool(block.name, block.input)
-            yield ("tool_result", {
-                "id": block.id,
-                "name": block.name,
-                "result": result
-            })
-            tool_results.append({
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": json.dumps(result) if isinstance(result, dict) else str(result)
-            })
+            yield ("tool_result", {"id": block.id, "name": block.name, "result": result})
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result) if isinstance(result, dict) else str(result),
+                }
+            )
 
         # Add tool results to messages
         messages.append({"role": "user", "content": tool_results})
@@ -130,6 +118,7 @@ async def lifespan(app: FastAPI):
     print("Starting Japanai Mercari Search Backend (Direct Anthropic SDK)...")
     yield
     print("Shutting down Japanai Mercari Search Backend...")
+
 
 # Create FastAPI app
 app = FastAPI(
@@ -166,8 +155,7 @@ async def chat_endpoint(request: ChatRequest):
             if command.type == "add-message":
                 # Extract text from parts
                 text_parts = [
-                    part.text for part in command.message.parts
-                    if part.type == "text" and part.text
+                    part.text for part in command.message.parts if part.type == "text" and part.text
                 ]
                 if text_parts:
                     text = " ".join(text_parts)
@@ -181,17 +169,21 @@ async def chat_endpoint(request: ChatRequest):
                 print(f"Tool Result: {command.result}")
                 result_content = json.dumps(command.result)
                 # Add to input_messages in Anthropic format for SDK
-                input_messages.append({
-                    "role": "user",
-                    "content": [{
-                        "type": "tool_result",
-                        "tool_use_id": command.toolCallId,
-                        "content": result_content
-                    }]
-                })
+                input_messages.append(
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "tool_result",
+                                "tool_use_id": command.tool_call_id,
+                                "content": result_content,
+                            }
+                        ],
+                    }
+                )
                 # Add to state in LangChain format for frontend
                 controller.state["messages"].append(
-                    create_tool_message(command.toolCallId, result_content)
+                    create_tool_message(command.tool_call_id, result_content)
                 )
 
         # Convert existing conversation history to Anthropic format
@@ -207,7 +199,10 @@ async def chat_endpoint(request: ChatRequest):
             history = state_messages
         history_messages = convert_langchain_to_anthropic(history)
         full_messages = history_messages + input_messages
-        print(f"Full conversation: {len(history_messages)} history + {len(input_messages)} new = {len(full_messages)} total")
+        print(
+            f"Full conversation: {len(history_messages)} history + "
+            f"{len(input_messages)} new = {len(full_messages)} total"
+        )
 
         # Track current tool call for streaming
         current_tool_call = None
@@ -217,7 +212,7 @@ async def chat_endpoint(request: ChatRequest):
         current_tool_calls = []
 
         # Run the agent loop with full conversation history
-        async for event_type, data in run_agent(full_messages, TOOLS, request.system):
+        async for event_type, data in run_agent(full_messages, get_tools(), request.system):
             if event_type == "text_delta":
                 # Initialize AI message if this is the first text delta
                 if current_ai_message_index is None:
@@ -238,13 +233,10 @@ async def chat_endpoint(request: ChatRequest):
                     controller.state["messages"].append(create_ai_message(""))
 
                 # Add tool call placeholder to the list
-                current_tool_calls.append({
-                    "id": data["id"],
-                    "name": data["name"],
-                    "args": {}
-                })
+                current_tool_calls.append({"id": data["id"], "name": data["name"], "args": {}})
                 # Update state with tool_calls
-                controller.state["messages"][current_ai_message_index]["tool_calls"] = current_tool_calls
+                msg = controller.state["messages"][current_ai_message_index]
+                msg["tool_calls"] = current_tool_calls
 
             elif event_type == "tool_call_args":
                 # Stream args as JSON text
@@ -257,7 +249,8 @@ async def chat_endpoint(request: ChatRequest):
                         tc["args"] = data["args"]
                         break
                 if current_ai_message_index is not None:
-                    controller.state["messages"][current_ai_message_index]["tool_calls"] = current_tool_calls
+                    msg = controller.state["messages"][current_ai_message_index]
+                    msg["tool_calls"] = current_tool_calls
 
             elif event_type == "tool_result":
                 # Set the tool result
@@ -268,9 +261,7 @@ async def chat_endpoint(request: ChatRequest):
                 # Add tool result to state in LangChain format
                 result = data["result"]
                 result_content = json.dumps(result) if isinstance(result, dict) else str(result)
-                controller.state["messages"].append(
-                    create_tool_message(data["id"], result_content)
-                )
+                controller.state["messages"].append(create_tool_message(data["id"], result_content))
 
                 # Reset for next assistant turn
                 current_ai_message_index = None
@@ -294,6 +285,7 @@ def main():
         log_level=settings.LOG_LEVEL.lower(),
         access_log=True,
     )
+
 
 if __name__ == "__main__":
     main()

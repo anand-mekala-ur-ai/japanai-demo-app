@@ -1,6 +1,5 @@
 from functools import lru_cache
 from pathlib import Path
-from typing import List
 
 from dotenv import load_dotenv
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -32,13 +31,14 @@ class Settings(BaseSettings):
     SCRAPINGBEE_API_KEY: str
 
     @property
-    def cors_origins_list(self) -> List[str]:
+    def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",")]
 
-@lru_cache()
+
+@lru_cache
 def get_settings() -> Settings:
     load_dotenv()
     return Settings()  # type: ignore[call-arg]
 
-settings = get_settings()
 
+settings = get_settings()

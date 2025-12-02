@@ -20,7 +20,7 @@ import { Loader2 } from "lucide-react";
 
 
 export const SearchProductsUI = makeAssistantToolUI({
-  toolName: 'searchProducts',
+  toolName: 'search_products',
   render: ({ result }) => {
 
     // Loading state - spinner with box and query display

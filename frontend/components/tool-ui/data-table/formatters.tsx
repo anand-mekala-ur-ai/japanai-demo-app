@@ -456,7 +456,7 @@ export function ImageValue({ value, options, row }: ImageValueProps) {
         "object-cover",
         rounded ? "rounded-md" : ""
       )}
-      style={{ width, height }}
+      style={{ width, height, minWidth: width }}
       loading="lazy"
       onError={(e) => {
         // Replace with placeholder on error
